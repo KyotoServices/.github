@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <b>The engineering org behind <a href="https://kyotopvp.com">KyotoPVP</a></b> — a premium, competitive Minecraft PvP network<br>
+  <b>The development team behind <a href="https://kyotopvp.com">KyotoPVP</a></b> — a premium, competitive Minecraft PvP network<br>
   with automatic tier testing, real-time stats, and a thriving global community.
 </p>
 
@@ -135,7 +135,7 @@ flowchart TD
 </table>
 
 <p align="center">
-  <sub>Hop on at <code>play.kyotopvp.com</code> — Java Edition 1.8 through 1.21.</sub>
+  <sub>Hop on at <code>play.kyotopvp.com</code> — Java Edition 1.7 through 26.2.</sub>
 </p>
 
 ---
