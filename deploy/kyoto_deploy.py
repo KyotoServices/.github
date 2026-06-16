@@ -129,6 +129,32 @@ def restart_container(ssh, container_id: str) -> None:
     run(ssh, f"docker restart {container_id}")
 
 
+def restart_service(ssh, service_name: str) -> None:
+    _print(f"    restarting service {service_name}")
+    run(ssh, f"sudo systemctl restart {service_name}")
+
+
+def upload_dir_with_backup(ssh, local_dir: str, remote_dir: str) -> None:
+    """Upload a local dir tree to remote_dir, renaming any existing dir to a timestamped backup."""
+    if remote_path_exists(ssh, remote_dir):
+        backup = remote_dir + _backup_suffix()
+        run(ssh, f'mv "{remote_dir}" "{backup}"')
+        _print(f"    backed up existing remote dir to {backup}")
+    run(ssh, f'mkdir -p "{remote_dir}"')
+    sftp = ssh.open_sftp()
+    try:
+        for root, _dirs, files in os.walk(local_dir):
+            rel = os.path.relpath(root, local_dir)
+            remote_root = remote_dir if rel == "." else posixpath.join(remote_dir, *rel.split(os.sep))
+            if rel != ".":
+                run(ssh, f'mkdir -p "{remote_root}"', check=False)
+            for fname in files:
+                sftp.put(os.path.join(root, fname), posixpath.join(remote_root, fname))
+        _print(f"    uploaded {local_dir} -> {remote_dir}")
+    finally:
+        sftp.close()
+
+
 def wait_for_log_match(ssh, log_path: str, grep_pattern: str, description: str,
                        timeout_seconds: int = 150, poll_interval: int = 10) -> bool:
     _print(f"    waiting up to {timeout_seconds}s for: {description}...")

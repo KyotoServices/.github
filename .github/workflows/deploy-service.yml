@@ -1,0 +1,90 @@
+name: Deploy systemd service (reusable)
+
+# Deploys a published release's installDist tarball to a systemd service host
+# (Kyoto-API, KyotoBot) via the self-hosted runner.
+on:
+  workflow_call:
+    inputs:
+      environment:
+        type: string
+        default: dev
+      host:
+        type: string
+        required: true
+      service-name:
+        type: string
+        required: true
+      inner-dir:
+        description: "Top dir name inside the tar (e.g. kyotopvp-api)"
+        type: string
+        required: true
+      extract-dir:
+        description: "Remote dir to extract into"
+        type: string
+        required: true
+      app-dir:
+        description: "Optional: sync <extract-dir>/<inner-dir>/ into this dir"
+        type: string
+        default: ""
+      http-check:
+        type: string
+        default: ""
+      log-path:
+        type: string
+        default: ""
+      log-ready:
+        type: string
+        default: ""
+      tag:
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ inputs.environment }}-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, kyoto-deploy]
+    environment: ${{ inputs.environment }}
+    steps:
+      - name: Resolve tag
+        id: t
+        run: |
+          T="${{ inputs.tag }}"; [ -z "$T" ] && T="${{ github.event.release.tag_name }}"
+          if [ -z "$T" ]; then echo "::error::No tag"; exit 1; fi
+          echo "tag=$T" >> "$GITHUB_OUTPUT"
+
+      - name: Download release tarball
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.t.outputs.tag }}
+        run: |
+          set -euo pipefail
+          rm -rf artifacts && mkdir -p artifacts
+          json=$(curl -sf -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$REPO/releases/tags/$TAG")
+          sel='.assets[] | select(.name|endswith(".tar.gz"))'
+          name=$(echo "$json" | jq -r "$sel | .name" | head -n1)
+          url=$(echo "$json" | jq -r "$sel | .url" | head -n1)
+          if [ -z "$name" ] || [ "$name" = "null" ]; then echo "::error::No .tar.gz asset in $TAG"; exit 1; fi
+          curl -sfL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/octet-stream" "$url" -o "artifacts/$name"
+          echo "Downloaded $name ($(stat -c%s "artifacts/$name") bytes)"
+
+      - name: Deploy
+        env:
+          KYOTO_CREDS_FILE: /opt/kyoto-deploy/creds.md
+        run: |
+          set -euo pipefail
+          ARGS=(--host '${{ inputs.host }}' --service-name '${{ inputs.service-name }}'
+                --inner-dir '${{ inputs.inner-dir }}' --extract-dir '${{ inputs.extract-dir }}'
+                --artifact 'artifacts/*.tar.gz')
+          [ -n '${{ inputs.app-dir }}' ]   && ARGS+=(--app-dir '${{ inputs.app-dir }}')
+          [ -n '${{ inputs.http-check }}' ] && ARGS+=(--http-check '${{ inputs.http-check }}')
+          [ -n '${{ inputs.log-path }}' ]  && ARGS+=(--log-path '${{ inputs.log-path }}')
+          [ -n '${{ inputs.log-ready }}' ] && ARGS+=(--log-ready '${{ inputs.log-ready }}')
+          python3 /opt/kyoto-deploy/deploy_service.py "${ARGS[@]}"
