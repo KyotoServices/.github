@@ -1,0 +1,95 @@
+name: Deploy to Pelican (reusable)
+
+# Deploys a published release's plugin jar to a Pelican-managed game server.
+# Runs on the self-hosted runner inside the ZeroTier network (cloud runners
+# can't reach the servers). The `environment` gate provides the approval step.
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: "GitHub Environment to deploy through (provides the approval gate)"
+        type: string
+        default: dev
+      host:
+        description: "Target host IP"
+        type: string
+        required: true
+      remote-dir:
+        description: "Plugins dir on the host (embeds the Pelican server UUID)"
+        type: string
+        required: true
+      plugin-name:
+        description: "Plugin name (matches the jar prefix and the 'Enabling <name>' log line)"
+        type: string
+        required: true
+      log-path:
+        description: "Path to the server's latest.log"
+        type: string
+        required: true
+      container-fallback:
+        description: "Fallback docker short-id if UUID lookup finds nothing"
+        type: string
+        default: ""
+      tag:
+        description: "Release tag to deploy (defaults to the triggering release's tag)"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ inputs.environment }}-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, kyoto-deploy]
+    environment: ${{ inputs.environment }}
+    steps:
+      - name: Resolve tag
+        id: t
+        run: |
+          T="${{ inputs.tag }}"
+          [ -z "$T" ] && T="${{ github.event.release.tag_name }}"
+          if [ -z "$T" ]; then echo "::error::No tag to deploy"; exit 1; fi
+          echo "tag=$T" >> "$GITHUB_OUTPUT"
+          echo "Deploying $T of ${{ github.repository }} to ${{ inputs.environment }}"
+
+      - name: Download release jar
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.t.outputs.tag }}
+          PLUGIN: ${{ inputs.plugin-name }}
+        run: |
+          set -euo pipefail
+          rm -rf artifacts && mkdir -p artifacts
+          json=$(curl -sf -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$REPO/releases/tags/$TAG")
+          name=$(echo "$json" | jq -r --arg p "$PLUGIN" \
+            '.assets[] | select(.name|startswith($p+"-")) | select(.name|endswith(".jar"))
+             | select(.name|test("sources|javadoc|plain")|not) | .name' | head -n1)
+          url=$(echo "$json" | jq -r --arg p "$PLUGIN" \
+            '.assets[] | select(.name|startswith($p+"-")) | select(.name|endswith(".jar"))
+             | select(.name|test("sources|javadoc|plain")|not) | .url' | head -n1)
+          if [ -z "$name" ] || [ "$name" = "null" ]; then
+            echo "::error::No matching jar asset for $PLUGIN in release $TAG"; exit 1
+          fi
+          curl -sfL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/octet-stream" \
+            "$url" -o "artifacts/$name"
+          echo "Downloaded $name ($(stat -c%s "artifacts/$name") bytes)"
+
+      - name: Deploy to ${{ inputs.host }}
+        env:
+          KYOTO_CREDS_FILE: /opt/kyoto-deploy/creds.md
+        run: |
+          set -euo pipefail
+          python3 /opt/kyoto-deploy/deploy_artifact.py \
+            --host '${{ inputs.host }}' \
+            --remote-dir '${{ inputs.remote-dir }}' \
+            --plugin-name '${{ inputs.plugin-name }}' \
+            --log-path '${{ inputs.log-path }}' \
+            --container-fallback '${{ inputs.container-fallback }}' \
+            --artifact 'artifacts/*.jar'
