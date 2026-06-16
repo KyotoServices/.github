@@ -1,0 +1,62 @@
+name: Node Library Release (reusable)
+
+# Draft GitHub Release for Web-Shared (@kyoto/ui): npm pack tarball + patch notes.
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        type: string
+        default: "22"
+      version:
+        type: string
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then V="${{ inputs.version }}"; else V="${GITHUB_REF_NAME#v}"; fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "tag=v$V" >> "$GITHUB_OUTPUT"
+
+      - name: Pack
+        run: |
+          set -euo pipefail
+          npm version "${{ steps.ver.outputs.version }}" --no-git-tag-version --allow-same-version
+          mkdir -p artifacts
+          npm pack --pack-destination artifacts
+          ls -la artifacts
+
+      - name: Generate patch notes
+        id: notes
+        uses: KyotoServices/.github/actions/changelog@main
+        with:
+          version: ${{ steps.ver.outputs.version }}
+          repo-url: ${{ github.server_url }}/${{ github.repository }}
+
+      - name: Create draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: ${{ github.event.repository.name }} ${{ steps.ver.outputs.tag }}
+          body: ${{ steps.notes.outputs.notes }}
+          draft: true
+          prerelease: ${{ contains(steps.ver.outputs.version, '-') }}
+          files: |
+            artifacts/*
+            CHANGELOG.md

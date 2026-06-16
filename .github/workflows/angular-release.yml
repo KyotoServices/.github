@@ -1,0 +1,105 @@
+name: Angular Release (reusable)
+
+# Build + draft GitHub Release for Angular web apps.
+on:
+  workflow_call:
+    inputs:
+      dist-path:
+        description: "Built output dir relative to repo root, e.g. dist/eagleview/browser"
+        type: string
+        required: true
+      package-name:
+        description: "Short name used for the artifact zip, e.g. eagleview"
+        type: string
+        required: true
+      shared-lib:
+        type: boolean
+        default: false
+      node-version:
+        type: string
+        default: "22"
+      version:
+        type: string
+        default: ""
+    secrets:
+      SIBLING_TOKEN:
+        description: "Token with read access to Web-Shared (omit for public repos)"
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          path: main
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Checkout Web-Shared
+        if: inputs.shared-lib
+        uses: actions/checkout@v4
+        with:
+          repository: KyotoServices/Web-Shared
+          path: Web-Shared
+          token: ${{ secrets.SIBLING_TOKEN || github.token }}
+
+      - name: Set up Node ${{ inputs.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+          cache-dependency-path: main/package-lock.json
+
+      - name: Enable corepack
+        run: corepack enable
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then V="${{ inputs.version }}"; else V="${GITHUB_REF_NAME#v}"; fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "tag=v$V" >> "$GITHUB_OUTPUT"
+
+      - name: Install & build
+        working-directory: main
+        run: |
+          npm version "${{ steps.ver.outputs.version }}" --no-git-tag-version --allow-same-version
+          npm ci
+          npm run build
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          ZIP="artifacts/${{ inputs.package-name }}-${{ steps.ver.outputs.version }}.zip"
+          if [ ! -d "main/${{ inputs.dist-path }}" ]; then
+            echo "::error::Build output not found at main/${{ inputs.dist-path }}"; exit 1
+          fi
+          ( cd "main/${{ inputs.dist-path }}" && zip -r "$GITHUB_WORKSPACE/$ZIP" . )
+          ls -la artifacts
+
+      - name: Generate patch notes
+        id: notes
+        uses: KyotoServices/.github/actions/changelog@main
+        with:
+          version: ${{ steps.ver.outputs.version }}
+          repo-url: ${{ github.server_url }}/${{ github.repository }}
+          working-directory: main
+
+      - name: Create draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: ${{ github.event.repository.name }} ${{ steps.ver.outputs.tag }}
+          body: ${{ steps.notes.outputs.notes }}
+          draft: true
+          prerelease: ${{ contains(steps.ver.outputs.version, '-') }}
+          files: |
+            artifacts/*
+            main/CHANGELOG.md

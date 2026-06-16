@@ -1,0 +1,62 @@
+name: Static Release (reusable)
+
+# Draft GitHub Release for static-HTML repos (Web-TebexStore): zip the site + notes.
+on:
+  workflow_call:
+    inputs:
+      artifact-name:
+        description: "Base name for the zip, e.g. tebex-store"
+        type: string
+        required: true
+      version:
+        type: string
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then V="${{ inputs.version }}"; else V="${GITHUB_REF_NAME#v}"; fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "tag=v$V" >> "$GITHUB_OUTPUT"
+
+      - name: Package site
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          ZIP="$GITHUB_WORKSPACE/artifacts/${{ inputs.artifact-name }}-${{ steps.ver.outputs.version }}.zip"
+          # Zip the published site, excluding VCS/CI metadata and the changelog.
+          zip -r "$ZIP" . \
+            -x ".git/*" ".github/*" "CHANGELOG.md" "artifacts/*" "README.md"
+          ls -la artifacts
+
+      - name: Generate patch notes
+        id: notes
+        uses: KyotoServices/.github/actions/changelog@main
+        with:
+          version: ${{ steps.ver.outputs.version }}
+          repo-url: ${{ github.server_url }}/${{ github.repository }}
+
+      - name: Create draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: ${{ github.event.repository.name }} ${{ steps.ver.outputs.tag }}
+          body: ${{ steps.notes.outputs.notes }}
+          draft: true
+          prerelease: ${{ contains(steps.ver.outputs.version, '-') }}
+          files: |
+            artifacts/*
+            CHANGELOG.md

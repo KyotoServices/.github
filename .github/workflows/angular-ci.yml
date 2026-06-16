@@ -1,0 +1,68 @@
+name: Angular CI (reusable)
+
+# Build-check for Angular web apps. Called by each app's .github/workflows/ci.yml.
+on:
+  workflow_call:
+    inputs:
+      shared-lib:
+        description: "Checkout KyotoServices/Web-Shared as a sibling (for @kyoto/ui file: dep)"
+        type: boolean
+        default: false
+      run-tests:
+        description: "Run npm run test after build"
+        type: boolean
+        default: true
+      node-version:
+        type: string
+        default: "22"
+    secrets:
+      SIBLING_TOKEN:
+        description: "Token with read access to Web-Shared (omit for public repos)"
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          path: main
+
+      - name: Checkout Web-Shared
+        if: inputs.shared-lib
+        uses: actions/checkout@v4
+        with:
+          repository: KyotoServices/Web-Shared
+          path: Web-Shared
+          token: ${{ secrets.SIBLING_TOKEN || github.token }}
+
+      - name: Set up Node ${{ inputs.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+          cache-dependency-path: main/package-lock.json
+
+      - name: Enable corepack
+        run: corepack enable
+
+      - name: Install
+        working-directory: main
+        run: npm ci
+
+      - name: Build
+        working-directory: main
+        run: npm run build
+
+      - name: Test
+        if: inputs.run-tests
+        working-directory: main
+        run: npm run test

@@ -1,0 +1,31 @@
+name: "Kyoto changelog"
+description: "Generate categorized patch notes from commits since the previous tag and maintain CHANGELOG.md"
+inputs:
+  version:
+    description: "Release version (without leading v), e.g. 1.0.0-beta.2"
+    required: true
+  repo-url:
+    description: "Repository web URL for compare links, e.g. https://github.com/KyotoServices/KyotoCore-MC"
+    required: false
+    default: ""
+  working-directory:
+    description: "Directory containing the git repo (the primary checkout)"
+    required: false
+    default: "."
+outputs:
+  notes:
+    description: "Generated release-notes markdown for the release body"
+    value: ${{ steps.gen.outputs.notes }}
+  changelog-path:
+    description: "Path to the maintained CHANGELOG.md, relative to working-directory"
+    value: "CHANGELOG.md"
+runs:
+  using: "composite"
+  steps:
+    - id: gen
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        KYOTO_VERSION: ${{ inputs.version }}
+        KYOTO_REPO_URL: ${{ inputs.repo-url }}
+      run: bash "${{ github.action_path }}/gen-notes.sh"

@@ -1,0 +1,44 @@
+name: Node Library CI (reusable)
+
+# Lightweight integrity check for Web-Shared (@kyoto/ui). It ships no build/deps
+# of its own and is type-checked transitively when the consuming apps build, so
+# here we just verify package.json is valid and every exports target exists.
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        type: string
+        default: "22"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+      - name: Validate package exports
+        run: |
+          node -e '
+            const fs = require("fs");
+            const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            const targets = new Set([pkg.main].filter(Boolean));
+            const walk = (v) => typeof v === "string"
+              ? targets.add(v)
+              : v && Object.values(v).forEach(walk);
+            walk(pkg.exports || {});
+            const missing = [...targets].filter((t) => !fs.existsSync(t));
+            if (missing.length) {
+              console.error("Missing export targets:\n" + missing.join("\n"));
+              process.exit(1);
+            }
+            console.log("OK — " + targets.size + " export target(s) present.");
+          '

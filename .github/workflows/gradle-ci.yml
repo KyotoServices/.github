@@ -1,0 +1,64 @@
+name: Gradle CI (reusable)
+
+# Build-check for Kotlin/Gradle repos. Called by each repo's .github/workflows/ci.yml.
+on:
+  workflow_call:
+    inputs:
+      build-task:
+        description: "Gradle task(s) to run for the build check"
+        type: string
+        default: "build"
+      java-version:
+        type: string
+        default: "21"
+      sibling-repo:
+        description: "Optional org/repo to checkout alongside (e.g. for includeBuild)"
+        type: string
+        default: ""
+      sibling-path:
+        description: "Path (relative to the workspace parent) for the sibling checkout"
+        type: string
+        default: ""
+    secrets:
+      SIBLING_TOKEN:
+        description: "Token with read access to the sibling repo (omit for public repos)"
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          path: main
+
+      - name: Checkout sibling repo
+        if: inputs.sibling-repo != ''
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.sibling-repo }}
+          path: ${{ inputs.sibling-path }}
+          token: ${{ secrets.SIBLING_TOKEN || github.token }}
+
+      - name: Set up JDK ${{ inputs.java-version }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java-version }}
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build
+        working-directory: main
+        run: |
+          chmod +x ./gradlew
+          ./gradlew ${{ inputs.build-task }} --no-daemon --stacktrace

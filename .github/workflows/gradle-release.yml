@@ -1,0 +1,140 @@
+name: Gradle Release (reusable)
+
+# Build + draft GitHub Release for Kotlin/Gradle repos.
+# Called by each repo's .github/workflows/release.yml (on tag push or dispatch).
+on:
+  workflow_call:
+    inputs:
+      artifact-task:
+        description: "Gradle task that produces the deployable artifact"
+        type: string
+        required: true
+      artifact-glob:
+        description: "Glob (relative to repo root) for jar artifacts to attach"
+        type: string
+        default: "build/libs/*.jar"
+      package-as-tar:
+        description: "Tar an installDist directory instead of attaching jars"
+        type: boolean
+        default: false
+      install-dir:
+        description: "installDist output dir (relative to repo root), e.g. build/install/kyotopvp-api"
+        type: string
+        default: ""
+      java-version:
+        type: string
+        default: "21"
+      sibling-repo:
+        type: string
+        default: ""
+      sibling-path:
+        type: string
+        default: ""
+      version:
+        description: "Explicit version (used by workflow_dispatch; tag name wins otherwise)"
+        type: string
+        default: ""
+    secrets:
+      SIBLING_TOKEN:
+        description: "Token with read access to the sibling repo (omit for public repos)"
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          path: main
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Checkout sibling repo
+        if: inputs.sibling-repo != ''
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.sibling-repo }}
+          path: ${{ inputs.sibling-path }}
+          token: ${{ secrets.SIBLING_TOKEN || github.token }}
+
+      - name: Set up JDK ${{ inputs.java-version }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java-version }}
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            V="${{ inputs.version }}"
+          else
+            V="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "tag=v$V" >> "$GITHUB_OUTPUT"
+          echo "Releasing version $V"
+
+      - name: Build artifact
+        working-directory: main
+        run: |
+          chmod +x ./gradlew
+          ./gradlew ${{ inputs.artifact-task }} \
+            -Pversion=${{ steps.ver.outputs.version }} \
+            -PreleaseVersion=${{ steps.ver.outputs.version }} \
+            --no-daemon --stacktrace
+
+      - name: Stage artifacts
+        id: stage
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          if [ "${{ inputs.package-as-tar }}" = "true" ]; then
+            DIR="main/${{ inputs.install-dir }}"
+            BASE="$(basename "${{ inputs.install-dir }}")"
+            PARENT="$(dirname "$DIR")"
+            tar -C "$PARENT" -czf "artifacts/${BASE}-${{ steps.ver.outputs.version }}.tar.gz" "$BASE"
+          else
+            shopt -s nullglob
+            found=0
+            for f in main/${{ inputs.artifact-glob }}; do
+              case "$f" in
+                *-sources.jar|*-javadoc.jar|*-plain.jar) continue ;;
+              esac
+              cp "$f" artifacts/
+              found=1
+            done
+            if [ "$found" -eq 0 ]; then
+              echo "::error::No artifacts matched main/${{ inputs.artifact-glob }}"
+              exit 1
+            fi
+          fi
+          echo "Staged:"; ls -la artifacts
+
+      - name: Generate patch notes
+        id: notes
+        uses: KyotoServices/.github/actions/changelog@main
+        with:
+          version: ${{ steps.ver.outputs.version }}
+          repo-url: ${{ github.server_url }}/${{ github.repository }}
+          working-directory: main
+
+      - name: Create draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: ${{ github.event.repository.name }} ${{ steps.ver.outputs.tag }}
+          body: ${{ steps.notes.outputs.notes }}
+          draft: true
+          prerelease: ${{ contains(steps.ver.outputs.version, '-') }}
+          files: |
+            artifacts/*
+            main/CHANGELOG.md
