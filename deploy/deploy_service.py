@@ -16,6 +16,7 @@ import glob
 import os
 import posixpath
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import kyoto_deploy as kd
@@ -84,11 +85,23 @@ def main() -> None:
                 sys.exit(f"Did not see '{args.log_ready}' in {args.log_path}")
 
         if args.http_check:
-            kd.wait_for_log_match  # noop ref
-            _, code, _ = kd.run(ssh, f"sleep 3; curl -s -o /dev/null -w '%{{http_code}}' {args.http_check}", check=False)
-            if code.strip() != "200":
-                sys.exit(f"HTTP check {args.http_check} returned {code.strip()} (expected 200)")
-            kd._print(f"    HTTP check {args.http_check} -> 200")
+            # Poll until the server responds (any HTTP code < 500 means it's up and
+            # listening — e.g. 404 on '/' is fine for an /api-only service). Allows
+            # for slow JVM/Ktor startup.
+            kd._print(f"    polling {args.http_check} for liveness (up to 90s)...")
+            up = False
+            for _ in range(18):
+                time.sleep(5)
+                _, code, _ = kd.run(
+                    ssh, f"curl -s -o /dev/null -w '%{{http_code}}' --max-time 5 {args.http_check}",
+                    check=False)
+                c = code.strip()
+                if c.isdigit() and c != "000" and int(c) < 500:
+                    kd._print(f"    HTTP check {args.http_check} -> {c} (up)")
+                    up = True
+                    break
+            if not up:
+                sys.exit(f"HTTP check {args.http_check} never became healthy (last: {c or 'n/a'})")
 
         kd._print(f"\n{'Rolled back' if args.rollback else 'Deployed'} {args.service_name} on {args.host}")
     finally:
