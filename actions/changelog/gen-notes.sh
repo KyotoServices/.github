@@ -28,9 +28,12 @@ fi
 # --- Collect commit subjects (hash <US> subject <US> author), newest first.
 US=$'\x1f'
 COMMITS=()
-while IFS= read -r line; do
+# tformat: terminates every record (incl. the last) with a newline, and the
+# `|| [ -n "$line" ]` guard catches any final unterminated line — without both,
+# the oldest commit in the range is dropped.
+while IFS= read -r line || [ -n "$line" ]; do
   [ -n "$line" ] && COMMITS+=("$line")
-done < <(git log "$RANGE" --no-merges --pretty=format:"%h${US}%s${US}%an")
+done < <(git log "$RANGE" --no-merges --pretty=tformat:"%h${US}%s${US}%an")
 
 ADDED=(); FIXED=(); CHANGED=(); REMOVED=(); SECURITY=(); DEPS=(); OTHER=()
 
