@@ -129,3 +129,8 @@ These are configured in the GitHub UI, not in files:
   **Release** run → **Re-run jobs** (the tag already exists), or delete and
   re-push the tag.
 - **Wrong bucket in notes** → adjust keyword lists in `gen-notes.sh`.
+- **Need a release for a sibling-dependent repo before `SIBLING_TOKEN` exists**
+  → build locally (the sibling repos are checked out next to it) and publish by
+  hand, e.g. `./gradlew shadowJar -PreleaseVersion=X` or `npm run build`, then
+  `gh release create vX -R KyotoServices/<repo> --draft --prerelease <artifact>`.
+  This is a stopgap; add `SIBLING_TOKEN` so CI does it automatically.
